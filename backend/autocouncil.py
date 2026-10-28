@@ -444,145 +444,152 @@ async def run_autocouncil(
         metadata={"max_rounds": max_rounds},
     )
 
-    # Track convergence state
-    top_models: List[Optional[str]] = []
-    answer_lengths: List[int] = []
-    answer_history: List[Dict[str, Any]] = []
-    previous_synthesis = ""
+    try:
+        # Track convergence state
+        top_models: List[Optional[str]] = []
+        answer_lengths: List[int] = []
+        answer_history: List[Dict[str, Any]] = []
+        previous_synthesis = ""
 
-    round_idx = 0
-    converged = False
-    convergence_reason = None
+        round_idx = 0
+        converged = False
+        convergence_reason = None
 
-    await _emit(progress_callback, "autocouncil_start", {"max_rounds": max_rounds, "models": models, "chairman": chairman})
+        await _emit(progress_callback, "autocouncil_start", {"max_rounds": max_rounds, "models": models, "chairman": chairman})
 
-    while round_idx < max_rounds:
-        round_idx += 1
-        logger.info(
-            f"Autocouncil round {round_idx}/{max_rounds} with {len(models)} models"
-        )
-        await _emit(progress_callback, "round_start", {"round": round_idx})
-
-        # --- Stage 1 ---
-        await _emit(progress_callback, "stage1_start", {"round": round_idx})
-        stage1 = await _autocouncil_stage1(
-            query, models, previous_synthesis, search_context
-        )
-        await _emit(progress_callback, "stage1_complete", {"round": round_idx, "results": len(stage1)})
-
-        # Trace round's Stage 1
-        if trace_ctx is not None:
-            for r in stage1:
-                trace_stage(
-                    trace_ctx,
-                    f"round.{round_idx}.stage1.{r['model']}",
-                    r["model"],
-                    input_data={"query": query, "previous_context": previous_synthesis},
-                    output_data=r,
-                )
-
-        successful_s1 = [r for r in stage1 if not r.get("error")]
-        if not successful_s1:
-            logger.warning(f"Round {round_idx}: all models failed in Stage 1")
-            await _emit(progress_callback, "round_complete", {"round": round_idx, "error": "all_models_failed"})
-            break
-
-        # --- Stage 2 ---
-        await _emit(progress_callback, "stage2_start", {"round": round_idx})
-        label_map, stage2 = await _autocouncil_stage2(
-            query, stage1, previous_synthesis, search_context
-        )
-        await _emit(progress_callback, "stage2_complete", {"round": round_idx, "results": len(stage2)})
-
-        # Trace round's Stage 2
-        if trace_ctx is not None:
-            for r in stage2:
-                trace_stage(
-                    trace_ctx,
-                    f"round.{round_idx}.stage2.{r['model']}",
-                    r["model"],
-                    input_data={"query": query, "label_map": label_map},
-                    output_data=r,
-                )
-
-        # --- Aggregate rankings ---
-        aggregate = calculate_aggregate_rankings(stage2, label_map)
-        top = _top_model(aggregate)
-        top_models.append(top)
-
-        # --- Stage 3 ---
-        await _emit(progress_callback, "stage3_start", {"round": round_idx})
-        stage3 = await _autocouncil_stage3(
-            query, stage1, stage2, chairman, previous_synthesis, search_context
-        )
-        await _emit(progress_callback, "stage3_complete", {"round": round_idx})
-
-        synthesis = stage3.get("response", "")
-
-        # Trace round's Stage 3
-        if trace_ctx is not None:
-            trace_stage(
-                trace_ctx,
-                f"round.{round_idx}.stage3.chairman",
-                chairman,
-                input_data={"query": query, "previous_context": previous_synthesis},
-                output_data={"response": synthesis, "error": stage3.get("error", False)},
-            )
-        answer_lengths.append(len(synthesis))
-        previous_synthesis = synthesis
-
-        # Record round
-        answer_history.append(
-            {
-                "round": round_idx,
-                "stage1_results": stage1,
-                "stage2_results": stage2,
-                "label_to_model": label_map,
-                "aggregate_rankings": aggregate,
-                "synthesis": synthesis,
-                "chairman_model": chairman,
-            }
-        )
-
-        await _emit(progress_callback, "round_complete", {"round": round_idx, "answer_length": len(synthesis)})
-
-        # --- Convergence check ---
-        converged, convergence_reason = _detect_convergence(
-            round_idx, top_models, answer_lengths, aggregate
-        )
-
-        if converged:
+        while round_idx < max_rounds:
+            round_idx += 1
             logger.info(
-                f"Autocouncil converged at round {round_idx}: {convergence_reason}"
+                f"Autocouncil round {round_idx}/{max_rounds} with {len(models)} models"
             )
-            await _emit(progress_callback, "converged", {"round": round_idx, "reason": convergence_reason})
-            # Trace convergence
-            if trace_ctx is not None:
-                trace_convergence(
-                    trace_ctx,
-                    round_idx,
-                    converged=True,
-                    reason=convergence_reason,
-                )
-            break
+            await _emit(progress_callback, "round_start", {"round": round_idx})
 
-    if not converged:
-        logger.info(
-            f"Autocouncil reached max rounds ({max_rounds}) without convergence"
+            # --- Stage 1 ---
+            await _emit(progress_callback, "stage1_start", {"round": round_idx})
+            stage1 = await _autocouncil_stage1(
+                query, models, previous_synthesis, search_context
+            )
+            await _emit(progress_callback, "stage1_complete", {"round": round_idx, "results": len(stage1)})
+
+            # Trace round's Stage 1
+            if trace_ctx is not None:
+                for r in stage1:
+                    trace_stage(
+                        trace_ctx,
+                        f"round.{round_idx}.stage1.{r['model']}",
+                        r["model"],
+                        input_data={"query": query, "previous_context": previous_synthesis},
+                        output_data=r,
+                    )
+
+            successful_s1 = [r for r in stage1 if not r.get("error")]
+            if not successful_s1:
+                logger.warning(f"Round {round_idx}: all models failed in Stage 1")
+                await _emit(progress_callback, "round_complete", {"round": round_idx, "error": "all_models_failed"})
+                break
+
+            # --- Stage 2 ---
+            await _emit(progress_callback, "stage2_start", {"round": round_idx})
+            label_map, stage2 = await _autocouncil_stage2(
+                query, stage1, previous_synthesis, search_context
+            )
+            await _emit(progress_callback, "stage2_complete", {"round": round_idx, "results": len(stage2)})
+
+            # Trace round's Stage 2
+            if trace_ctx is not None:
+                for r in stage2:
+                    trace_stage(
+                        trace_ctx,
+                        f"round.{round_idx}.stage2.{r['model']}",
+                        r["model"],
+                        input_data={"query": query, "label_map": label_map},
+                        output_data=r,
+                    )
+
+            # --- Aggregate rankings ---
+            aggregate = calculate_aggregate_rankings(stage2, label_map)
+            top = _top_model(aggregate)
+            top_models.append(top)
+
+            # --- Stage 3 ---
+            await _emit(progress_callback, "stage3_start", {"round": round_idx})
+            stage3 = await _autocouncil_stage3(
+                query, stage1, stage2, chairman, previous_synthesis, search_context
+            )
+            await _emit(progress_callback, "stage3_complete", {"round": round_idx})
+
+            synthesis = stage3.get("response", "")
+
+            # Trace round's Stage 3
+            if trace_ctx is not None:
+                trace_stage(
+                    trace_ctx,
+                    f"round.{round_idx}.stage3.chairman",
+                    chairman,
+                    input_data={"query": query, "previous_context": previous_synthesis},
+                    output_data={"response": synthesis, "error": stage3.get("error", False)},
+                )
+            answer_lengths.append(len(synthesis))
+            previous_synthesis = synthesis
+
+            # Record round
+            answer_history.append(
+                {
+                    "round": round_idx,
+                    "stage1_results": stage1,
+                    "stage2_results": stage2,
+                    "label_to_model": label_map,
+                    "aggregate_rankings": aggregate,
+                    "synthesis": synthesis,
+                    "chairman_model": chairman,
+                }
+            )
+
+            await _emit(progress_callback, "round_complete", {"round": round_idx, "answer_length": len(synthesis)})
+
+            # --- Convergence check ---
+            converged, convergence_reason = _detect_convergence(
+                round_idx, top_models, answer_lengths, aggregate
+            )
+
+            if converged:
+                logger.info(
+                    f"Autocouncil converged at round {round_idx}: {convergence_reason}"
+                )
+                await _emit(progress_callback, "converged", {"round": round_idx, "reason": convergence_reason})
+                break
+
+        if not converged:
+            logger.info(
+                f"Autocouncil reached max rounds ({max_rounds}) without convergence"
+            )
+
+        # Build final response from the last round
+        final_answer = previous_synthesis if answer_history else ""
+        final_rankings = answer_history[-1]["aggregate_rankings"] if answer_history else []
+
+        # Record the outcome for both convergence and max-round/all-model failure exits.
+        trace_convergence(
+            trace_ctx,
+            round_idx,
+            converged=converged,
+            reason=convergence_reason,
+            final_answer=final_answer,
         )
 
-    # Build final response from the last round
-    final_answer = previous_synthesis if answer_history else ""
-    final_rankings = answer_history[-1]["aggregate_rankings"] if answer_history else []
-
-    return {
-        "rounds": round_idx,
-        "converged": converged,
-        "convergence_reason": convergence_reason,
-        "final_answer": final_answer,
-        "answer_history": answer_history,
-        "final_rankings": final_rankings,
-    }
+        return {
+            "rounds": round_idx,
+            "converged": converged,
+            "convergence_reason": convergence_reason,
+            "final_answer": final_answer,
+            "answer_history": answer_history,
+            "final_rankings": final_rankings,
+        }
+    finally:
+        # Preserve partial traces on exceptions and asyncio cancellation as well.
+        # The SDK flush is synchronous; keep exporter I/O off the event loop.
+        if trace_ctx is not None:
+            await asyncio.to_thread(end_trace, trace_ctx)
 
 
 async def _emit(callback, phase: str, data: dict):
@@ -731,3 +738,4 @@ async def _cli_main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(_cli_main())
+

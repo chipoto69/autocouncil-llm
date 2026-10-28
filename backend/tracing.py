@@ -169,7 +169,7 @@ def trace_stage(
     if ctx is None:
         return
     try:
-        ctx.root.start_observation(
+        observation = ctx.root.start_observation(
             name=stage_name,
             as_type=as_type,
             input=input_data,
@@ -177,6 +177,9 @@ def trace_stage(
             model=model,
             metadata=metadata,
         )
+        # These stage results are recorded after the model call has completed.
+        # Manual observations are only exportable once they are ended.
+        observation.end()
     except Exception as exc:
         logger.debug("Langfuse span creation failed (%s): %s", stage_name, exc)
 
@@ -216,6 +219,10 @@ def end_trace(ctx: Optional[TraceContext]) -> None:
         return
     try:
         ctx.root.end()
+    except Exception as exc:
+        logger.debug("Langfuse root observation end failed: %s", exc)
+    try:
+        # Still flush completed children if ending the root failed.
         ctx.client.flush()
         logger.debug("Langfuse trace %s flushed", ctx.trace_id)
     except Exception as exc:
@@ -231,3 +238,4 @@ def flush() -> None:
         client.flush()
     except Exception as exc:
         logger.debug("Langfuse flush failed: %s", exc)
+
